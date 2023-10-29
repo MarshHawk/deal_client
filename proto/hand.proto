@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package deal_app;
+
+service Dealer{
+    rpc Deal(HandRequest) returns (HandResponse) {};
+}
+
+message HandRequest {
+    int32 playerCount = 1;
+}
+
+message Hand {
+    repeated string cards = 1;
+    double score = 2;
+    string description = 3;
+}
+
+message Board {
+    repeated string flop = 1;
+    string turn = 2;
+    string river = 3;
+}
+
+message HandResponse {
+    Board board = 1;
+    repeated Hand hands = 2;
+}
