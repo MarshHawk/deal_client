@@ -6,7 +6,7 @@ pub mod deal {
 }
 use deal::dealer_client::DealerClient;
 use deal::{
-    HandRequest,HandResponse,Hand,Board
+    HandRequest,HandResponse
 };
 use tonic::Request;
 
@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 player_count: player_count as i32,
             });
             println!("deal request: {:#?}", req);
-            let hand = client.deal(req).await?.into_inner();
+            let hand: HandResponse = client.deal(req).await?.into_inner();
             println!("Requested deal: {:#?}", hand);
         }
         None => println!("No subcommand was used"),
