@@ -8,11 +8,11 @@ pub mod deal {
 }
 use deal::dealer_client::DealerClient;
 use deal::{HandRequest, HandResponse};
-use inquire::error::InquireResult;
-use inquire::Select;
+use inquire::{InquireError, Select};
 use rusoto_core::credential::EnvironmentProvider;
 use rusoto_core::{HttpClient, Region};
-use rusoto_dynamodb::{DynamoDb, DynamoDbClient, ListTablesInput};
+use rusoto_dynamodb::DynamoDbClient;
+use tonic::Request;
 
 mod table {
     pub mod model {
@@ -37,8 +37,7 @@ mod table {
 
     pub mod repository {
         use rusoto_dynamodb::{
-            AttributeValue, DynamoDb, DynamoDbClient, PutItemInput, ScanInput,
-            UpdateItemInput,
+            AttributeValue, DynamoDb, DynamoDbClient, PutItemInput, ScanInput, UpdateItemInput,
         };
         use serde_dynamodb::from_hashmap;
         use uuid::Uuid;
@@ -86,21 +85,17 @@ mod table {
                 .iter()
                 .cloned()
                 .collect();
-                let update_expression =
-            "SET player_ids = list_append(if_not_exists(player_ids, :empty_list), :player_id)";
+                let update_expression = "SET player_ids = list_append(player_ids, :player_id)";
                 let condition_expression = "size(player_ids) < :max_players";
+                let vec = vec![AttributeValue {
+                    s: Some(table_id.to_string()),
+                    ..Default::default()
+                }];
                 let expression_attribute_values = [
                     (
                         ":player_id".to_string(),
                         AttributeValue {
-                            ss: Some(vec![player_id.to_string()]),
-                            ..Default::default()
-                        },
-                    ),
-                    (
-                        ":empty_list".to_string(),
-                        AttributeValue {
-                            ss: Some(vec![]),
+                            l: Some(vec),
                             ..Default::default()
                         },
                     ),
@@ -191,38 +186,30 @@ mod table {
     }
 }
 
-//#[derive(Parser)]
-//#[clap(version = "0.1", author = "Sean Glover", about = "A Poker Game in Rust")]
-//struct Options {
-//    #[clap(subcommand)]
-//    command: Command,
-//}
-//
-//#[derive(Parser)]
-//struct DealOptions {
-//    #[clap(long)]
-//    player_count: u32,
-//}
-//
-//
-//#[derive(Parser)]
-//struct PlayOptions {
-//    name: String,
-//}
-//
-//
-//#[derive(Parser)]
-//enum Command {
-//    Deal(DealOptions),
-//}
+#[derive(Parser)]
+#[clap(
+    version = "0.1",
+    author = "Sean Glover",
+    about = "A Poker Game in Rust"
+)]
+struct Cli {
+    #[clap(subcommand)]
+    command: Option<Commands>,
+}
 
-//async fn connect_to_table_service() -> Result<TableServiceClient<Channel>, Box<dyn std::error::Error>> {
-//    let channel = Channel::from_static("http://localhost:5004")
-//        .connect()
-//        .await?;
-//    let client = TableServiceClient::new(channel);
-//    Ok(client)
-//}
+#[derive(Parser)]
+enum Commands {
+    #[clap(version = "1.0", author = "Sean Glover")]
+    Deal {
+        #[clap(long)]
+        player_count: u32,
+    },
+    Play {
+        player_id: String,
+        #[clap(long, short, action)]
+        start: bool,
+    },
+}
 
 fn get_table_actions() -> Vec<&'static str> {
     vec!["Join Table", "Create Table"]
@@ -245,35 +232,71 @@ fn get_dynamodb_local_client() -> DynamoDbClient {
 }
 
 #[tokio::main]
-async fn main() -> InquireResult<()> {
-    let client = get_dynamodb_local_client();
-    const TABLES_TABLE_NAME: &str = "tables";
-    let table_repository =
-        table::repository::TableRepository::new(client, TABLES_TABLE_NAME.to_string());
-    let mut table_service = table::service::TableService::new(table_repository);
-    let result = table_service.create_table().await;
-    println!("Create table result: {:?}", result);
-    let tables = table_service.get_tables_with_space().await;
-    println!("Tables: {:?}", tables);
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Cli::parse();
+    match args.command {
+        Some(Commands::Deal { player_count }) => {
+            println!("Requesting deal for player count: {}", player_count);
+            let mut client = DealerClient::connect("http://127.0.0.1:5003").await?;
+            let req = Request::new(HandRequest {
+                player_count: player_count as i32,
+            });
+            println!("deal request: {:#?}", req);
+            let hand: HandResponse = client.deal(req).await?.into_inner();
+            println!("Requested deal: {:#?}", hand);
+        }
+        Some(Commands::Play { player_id, start }) => {
+            println!("Requesting play for: {}", player_id);
+            println!("Game will start: {}", start);
+            let client = get_dynamodb_local_client();
+            const TABLES_TABLE_NAME: &str = "tables";
+            let table_repository =
+                table::repository::TableRepository::new(client, TABLES_TABLE_NAME.to_string());
+            let mut table_service = table::service::TableService::new(table_repository);
+            let result = table_service.create_table().await;
+            println!("Create table result: {:?}", result);
+            let tables = table_service.get_tables_with_space().await;
+            println!("Tables: {:?}", tables);
 
-    //let list_tables_input: ListTablesInput = Default::default();
-    //let result = client.list_tables(list_tables_input).await.unwrap();
-    //println!("Tables: {:?}", result.table_names.unwrap_or_default());
-    //let args = Options::parse();
-    //
-    //use Command::*;
-    //match args.command {
-    //    Deal(args) => {
-    //        println!("Requesting deal for player count: {}", args.player_count);
-    //        let mut client = DealerClient::connect("http://127.0.0.1:5003").await?;
-    //        let req = Request::new(HandRequest {
-    //            player_count: args.player_count as i32,
-    //        });
-    //        println!("deal request: {:#?}", req);
-    //        let hand: HandResponse = client.deal(req).await?.into_inner();
-    //        println!("Requested deal: {:#?}", hand);
-    //    }
-    //}
+            let table_action_options: Vec<&str> = get_table_actions();
+
+            let table_action_ans: Result<&str, InquireError> =
+                Select::new("Please choose:", table_action_options).prompt();
+
+            match table_action_ans {
+                Ok("Join Table") => {
+                    let tables = table_service.get_tables_with_space().await?;
+                    let table_names: Vec<&str> =
+                        tables.iter().map(|table| table.id.as_str()).collect();
+                    let table_name_ans: Result<&str, InquireError> =
+                        Select::new("Please choose a table to join:", table_names).prompt();
+                    let table_name = table_name_ans.unwrap();
+                    let result = table_service
+                        .add_player_to_table(table_name, &player_id)
+                        .await;
+                    println!("Add player to table result: {:?}", result);
+                }
+                Ok("Create Table") => {
+                    let result = table_service.create_table().await;
+                    match result {
+                        Ok(table) => {
+                            println!("Table created with id: {}", table.id);
+                            let result = table_service
+                                .add_player_to_table(&table.id, &player_id)
+                                .await;
+                            match result {
+                                Ok(_) => println!("Player added to table successfully"),
+                                Err(e) => println!("Error adding player to table: {:?}", e),
+                            }
+                        }
+                        Err(e) => println!("Error creating table: {:?}", e),
+                    }
+                }
+                _ => {}
+            }
+        }
+        None => println!("No subcommand was used"),
+    }
 
     Ok(())
 }
