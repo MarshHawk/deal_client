@@ -1006,7 +1006,6 @@ dependencies = [
  "iggy",
  "inquire",
  "prost 0.12.1",
- "reqwest",
  "rusoto",
  "rusoto_core",
  "rusoto_dynamodb",

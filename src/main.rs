@@ -186,6 +186,107 @@ mod table {
     }
 }
 
+mod player {
+    pub mod model {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Clone, Debug, Deserialize, Serialize)]
+        pub struct Player {
+            pub id: String,
+            pub stack: Option<f64>,
+            pub cards: Vec<String>,
+            pub score: i32,
+            pub description: String,
+        }
+
+        impl Player {
+            async fn id(&self) -> &str {
+                &self.id
+            }
+
+            async fn stack(&self) -> Option<f64> {
+                self.stack
+            }
+
+            async fn cards(&self) -> &[String] {
+                &self.cards
+            }
+
+            async fn score(&self) -> i32 {
+                self.score
+            }
+
+            async fn description(&self) -> &str {
+                &self.description
+            }
+        }
+    }
+}
+
+mod hand {
+    pub mod model {
+        use crate::player::model::Player;
+
+
+        pub struct Hand {
+            id: String,
+            table_id: String,
+            players: Vec<Player>,
+            cards: Cards,
+            player_events: Vec<PlayerEvent>,
+            street_events: Vec<StreetEvent>,
+        }
+
+        struct Cards {
+            flop: Vec<String>,
+            turn: String,
+            river: String,
+        }
+
+        #[derive(Clone, Debug, PartialEq)]
+        pub struct PlayerEvent {
+            pub player_id: String,
+            pub action: PlayerAction,
+            pub amount: f64,
+            pub street_type: StreetType,
+            pub current_stack: Option<f64>,
+            pub current_pot: Option<f64>,
+        }
+
+        #[derive(Clone, Debug, PartialEq)]
+        pub enum PlayerAction {
+            Bet,
+            Check,
+            Fold,
+        }
+
+        #[derive(Clone, Debug, PartialEq)]
+        pub enum StreetType {
+            Preflop,
+            Flop,
+            Turn,
+            River,
+        }
+
+        #[derive(Clone, Debug, PartialEq)]
+        pub struct StreetEvent {
+            street_type: StreetType,
+            current_active_players: Vec<ActivePlayer>,
+            pot: f64,
+            cycle_count: u32,
+            should_increment_cycle: bool,
+        }
+
+        #[derive(Clone, Debug, PartialEq)]
+        struct ActivePlayer {
+            id: String,
+            bet: f64,
+            stack: f64,
+            is_inactive: Option<bool>,
+        }
+    }
+}
+
 #[derive(Parser)]
 #[clap(
     version = "0.1",
