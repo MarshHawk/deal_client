@@ -2,10 +2,6 @@ use std::env;
 
 //A command-line tool to play Texas Holdem Poker
 use clap::Parser;
-
-pub mod deal {
-    include!("deal_app.rs");
-}
 use deal::dealer_client::DealerClient;
 use deal::{HandRequest, HandResponse};
 use inquire::{InquireError, Select};
@@ -13,6 +9,10 @@ use rusoto_core::credential::EnvironmentProvider;
 use rusoto_core::{HttpClient, Region};
 use rusoto_dynamodb::DynamoDbClient;
 use tonic::Request;
+
+pub mod deal {
+    include!("deal_app.rs");
+}
 
 mod table {
     pub mod model {
@@ -190,12 +190,12 @@ mod player {
     pub mod model {
         use serde::{Deserialize, Serialize};
 
-        #[derive(Clone, Debug, Deserialize, Serialize)]
+        #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
         pub struct Player {
             pub id: String,
             pub stack: Option<f64>,
             pub cards: Vec<String>,
-            pub score: i32,
+            pub score: f64,
             pub description: String,
         }
 
@@ -212,7 +212,7 @@ mod player {
                 &self.cards
             }
 
-            async fn score(&self) -> i32 {
+            async fn score(&self) -> f64 {
                 self.score
             }
 
@@ -225,22 +225,23 @@ mod player {
 
 mod hand {
     pub mod model {
+        use serde::{Deserialize, Serialize};
+
         use crate::player::model::Player;
-
-
+        #[derive(Clone, Debug, PartialEq)]
         pub struct Hand {
-            id: String,
-            table_id: String,
-            players: Vec<Player>,
-            cards: Cards,
-            player_events: Vec<PlayerEvent>,
-            street_events: Vec<StreetEvent>,
+            pub id: String,
+            pub table_id: String,
+            pub players: Vec<Player>,
+            pub cards: Cards,
+            pub player_events: Vec<PlayerEvent>,
+            pub street_events: Vec<StreetEvent>,
         }
-
-        struct Cards {
-            flop: Vec<String>,
-            turn: String,
-            river: String,
+        #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+        pub struct Cards {
+            pub flop: Vec<String>,
+            pub turn: String,
+            pub river: String,
         }
 
         #[derive(Clone, Debug, PartialEq)]
@@ -270,19 +271,180 @@ mod hand {
 
         #[derive(Clone, Debug, PartialEq)]
         pub struct StreetEvent {
-            street_type: StreetType,
-            current_active_players: Vec<ActivePlayer>,
-            pot: f64,
-            cycle_count: u32,
-            should_increment_cycle: bool,
+            pub street_type: StreetType,
+            pub current_active_players: Vec<ActivePlayer>,
+            pub pot: f64,
+            pub cycle_count: u32,
+            pub should_increment_cycle: bool,
         }
 
         #[derive(Clone, Debug, PartialEq)]
-        struct ActivePlayer {
-            id: String,
-            bet: f64,
-            stack: f64,
-            is_inactive: Option<bool>,
+        pub struct ActivePlayer {
+            pub id: String,
+            pub bet: f64,
+            pub stack: f64,
+            pub is_inactive: Option<bool>,
+        }
+
+        #[derive(Clone, Debug, PartialEq)]
+        pub struct DealInput {
+            pub players: Vec<Player>,
+            pub table_id: String,
+        }
+    }
+    pub mod repository {
+        use rusoto_dynamodb::DynamoDbClient;
+        use rusoto_dynamodb::{AttributeValue, DynamoDb, PutItemInput};
+        use std::collections::HashMap;
+        use crate::hand::model::{Hand, PlayerAction, StreetType};
+
+        pub struct HandRepository {
+            client: DynamoDbClient,
+            table_name: String,
+        }
+
+        impl HandRepository {
+            pub fn new(client: DynamoDbClient, table_name: String) -> Self {
+                Self { client, table_name }
+            }
+            
+            pub async fn create_hand(&self, hand: Hand) {
+                // Add your implementation here
+                // Replace the TypeScript code with equivalent Rust code
+                println!("Creating hand: {:?}", hand);
+
+                // Convert the Hand struct to a HashMap of AttributeValues
+                let mut item: HashMap<String, AttributeValue> = HashMap::new();
+                item.insert("hand_id".to_string(), AttributeValue { s: Some(hand.id.clone()), ..Default::default() });
+                item.insert("player_events".to_string(), AttributeValue { l: Some(hand.player_events.into_iter().map(|event| {
+                    let mut event_item: HashMap<String, AttributeValue> = HashMap::new();
+                    event_item.insert("player_id".to_string(), AttributeValue { s: Some(event.player_id), ..Default::default() });
+                    // Convert PlayerAction enum to string
+                    event_item.insert("action".to_string(), AttributeValue { s: Some(match event.action {
+                        PlayerAction::Bet => "Bet".to_string(),
+                        PlayerAction::Check => "Check".to_string(),
+                        PlayerAction::Fold => "Fold".to_string(),
+                    }), ..Default::default() });
+                    event_item.insert("amount".to_string(), AttributeValue { n: Some(event.amount.to_string()), ..Default::default() });
+                    // Convert StreetType enum to string
+                    event_item.insert("street_type".to_string(), AttributeValue { s: Some(match event.street_type {
+                        StreetType::Preflop => "Preflop".to_string(),
+                        StreetType::Flop => "Flop".to_string(),
+                        StreetType::Turn => "Turn".to_string(),
+                        StreetType::River => "River".to_string(),
+                    }), ..Default::default() });
+                    event_item.insert("current_stack".to_string(), AttributeValue { n: event.current_stack.map(|stack| stack.to_string()), ..Default::default() });
+                    event_item.insert("current_pot".to_string(), AttributeValue { n: event.current_pot.map(|pot| pot.to_string()), ..Default::default() });
+                    AttributeValue { m: Some(event_item), ..Default::default() }
+                }).collect()), ..Default::default() });
+                item.insert("street_events".to_string(), AttributeValue { l: Some(hand.street_events.into_iter().map(|event| {
+                    let mut event_item: HashMap<String, AttributeValue> = HashMap::new();
+                    // Convert StreetType enum to string
+                    event_item.insert("street_type".to_string(), AttributeValue { s: Some(match event.street_type {
+                        StreetType::Preflop => "Preflop".to_string(),
+                        StreetType::Flop => "Flop".to_string(),
+                        StreetType::Turn => "Turn".to_string(),
+                        StreetType::River => "River".to_string(),
+                    }), ..Default::default() });
+                    event_item.insert("current_active_players".to_string(), AttributeValue { l: Some(event.current_active_players.into_iter().map(|player| {
+                        let mut player_item: HashMap<String, AttributeValue> = HashMap::new();
+                        player_item.insert("id".to_string(), AttributeValue { s: Some(player.id), ..Default::default() });
+                        player_item.insert("bet".to_string(), AttributeValue { n: Some(player.bet.to_string()), ..Default::default() });
+                        player_item.insert("stack".to_string(), AttributeValue { n: Some(player.stack.to_string()), ..Default::default() });
+                        player_item.insert("is_inactive".to_string(), AttributeValue { bool: player.is_inactive, ..Default::default() });
+                        AttributeValue { m: Some(player_item), ..Default::default() }
+                    }).collect()), ..Default::default() });
+                    event_item.insert("pot".to_string(), AttributeValue { n: Some(event.pot.to_string()), ..Default::default() });
+                    event_item.insert("cycle_count".to_string(), AttributeValue { n: Some(event.cycle_count.to_string()), ..Default::default() });
+                    event_item.insert("should_increment_cycle".to_string(), AttributeValue { bool: Some(event.should_increment_cycle), ..Default::default() });
+                    AttributeValue { m: Some(event_item), ..Default::default() }
+                }).collect()), ..Default::default() });
+
+                // Create the PutItemInput
+                let input = PutItemInput {
+                    table_name: self.table_name.clone(),
+                    item,
+                    ..Default::default()
+                };
+
+                // Use the DynamoDbClient to put the item into the table
+                let result = self.client.put_item(input).await.map_err(|e| e.to_string());
+                
+
+            }
+        }
+    }
+
+    pub mod service {
+        use tonic::Request;
+        use tonic::transport::Channel;
+        use crate::deal::HandRequest;
+        use crate::hand::model::Hand;
+        use crate::hand::model::{Cards, PlayerAction, PlayerEvent, StreetEvent, StreetType};
+        use crate::player::model::Player;
+        use crate::deal::dealer_client::DealerClient;
+
+        pub struct HandService {
+            hand_repository: super::repository::HandRepository,
+            dealer_client: DealerClient<Channel>,
+        }
+
+        impl HandService {
+            pub fn new(hand_repository: super::repository::HandRepository, dealer_client: DealerClient<Channel>) -> Self {
+                HandService {
+                    hand_repository,
+                    dealer_client,
+                }
+            }
+            
+            pub async fn create(&mut self, data: super::model::DealInput) -> Result<(Hand), Box<dyn std::error::Error>> {
+                // Add your implementation here
+                // Replace the TypeScript code with equivalent Rust code
+                let req = Request::new(HandRequest {
+                    player_count: data.players.len() as i32,
+                });
+                let deal_result = self.dealer_client.deal(req).await?.into_inner();
+
+
+                let hand = Hand {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    table_id: data.table_id,
+                    players: data
+                        .players
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| Player {
+                            id: p.id.clone(),
+                            stack: p.stack,
+                            score: deal_result.hands[i].score.clone(),
+                            cards: deal_result.hands[i].cards.clone(),
+                            description: deal_result.hands[i].description.clone(),
+                        })
+                        .collect(),
+                        cards: deal_result.board.map(|b| Cards {
+                            flop: b.flop,
+                            turn: b.turn,
+                            river: b.river,
+                        }).unwrap(),
+                    player_events: data
+                        .players
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| [0, 1].contains(i))
+                        .map(|(i, p)| PlayerEvent {
+                            player_id: p.id.clone(),
+                            action: PlayerAction::Bet,
+                            amount: if i == 0 { 10.0 } else { 20.0 },
+                            street_type: StreetType::Preflop,
+                            current_stack: None,
+                            current_pot: None,
+                        })
+                        .collect(),
+                    street_events: Vec::new(),
+                };
+                self.hand_repository.create_hand(hand.clone()).await;
+                Ok(hand)
+            }
         }
     }
 }
@@ -363,6 +525,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let table_action_ans: Result<&str, InquireError> =
                 Select::new("Please choose:", table_action_options).prompt();
+
+                //implement start game, receive hand from pub sub
 
             match table_action_ans {
                 Ok("Join Table") => {
